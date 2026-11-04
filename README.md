@@ -40,6 +40,14 @@ Requires OpenDeck 2.5.0 or newer
 3. Linux: Download [udev rules](./40-opendeck-akp153.rules) and install them by copying into `/etc/udev/rules.d/` and running `sudo udevadm control --reload-rules`
 4. Unplug and plug again the device, restart OpenDeck
 
+## Right side display
+
+The tall display on the right side is not a key. OpenDeck only sees the 15 keys (3 rows x 5 columns); touches on the right display are ignored.
+
+To show an image there, put a file named `side-panel.png` (or `side-panel.jpg`) next to the plugin executable in the OpenDeck plugin folder and restart OpenDeck. The image is scaled to fill a tall panel (portrait, roughly 1:3) and drawn across the whole display. Without that file the display stays black.
+
+Profiles created with the old 3x6 layout will have their keys shifted and need to be rearranged once.
+
 ## Known issues
 
 - All the "old" devices come with the same serial number. You cannot use two of the same devices at the same time (for example a pair of 153R-s), but you can use two different devices at the same time (for example a 153R and a 153E)
