@@ -1,8 +1,24 @@
 name: Build Windows plugin
 
+# - Every push: build only, the plugin zip is available as a workflow artifact
+# - Manual run ("Run workflow") with a version: build + GitHub release with the zip and release notes
+
 on:
   push:
+    branches: ["**"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for the release, e.g. 0.11.1-panel.1 (empty = build only, no release)"
+        required: false
+        default: ""
+      notes:
+        description: "Optional description of the changes (shown at the top of the release notes)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
 
 env:
   PLUGIN_ID: st.lynx.plugins.opendeck-akp153.sdPlugin
@@ -14,6 +30,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags, needed for the release notes
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          $version = "$env:INPUT_VERSION".Trim().TrimStart("v")
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+          if ($version) {
+            # Show the version in OpenDeck as well (only in the build, not committed)
+            $manifest = Get-Content manifest.json -Raw
+            $manifest = $manifest -replace '"Version": "[^"]*"', "`"Version`": `"$version`""
+            Set-Content manifest.json $manifest -Encoding utf8 -NoNewline
+          }
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -42,3 +76,52 @@ jobs:
         with:
           name: opendeck-akp153-windows
           path: build/opendeck-akp153.plugin.zip
+
+      - name: Write release notes
+        if: steps.version.outputs.version != ''
+        shell: pwsh
+        env:
+          INPUT_NOTES: ${{ github.event.inputs.notes }}
+        run: |
+          # Previous release tag reachable from this commit (e.g. the upstream v0.11.1)
+          $prev = git describe --tags --abbrev=0 HEAD 2>$null
+
+          if ($prev) {
+            $commits = git log "$prev..HEAD" --no-merges --pretty=format:"- %s (%h)"
+            $range = "seit $prev"
+          } else {
+            $commits = git log --no-merges --pretty=format:"- %s (%h)"
+            $range = "(gesamte Historie)"
+          }
+
+          $lines = @()
+
+          if ("$env:INPUT_NOTES".Trim()) {
+            $lines += "## Beschreibung"
+            $lines += ""
+            $lines += "$env:INPUT_NOTES".Trim()
+            $lines += ""
+          }
+
+          $lines += "## Änderungen $range"
+          $lines += ""
+          if ($commits) { $lines += $commits } else { $lines += "- keine neuen Commits" }
+          $lines += ""
+          $lines += "## Installation"
+          $lines += ""
+          $lines += "``opendeck-akp153.plugin.zip`` herunterladen und in OpenDeck über *Plugins → Install from file* installieren."
+
+          Set-Content build/release-notes.md ($lines -join "`n") -Encoding utf8
+          Get-Content build/release-notes.md
+
+      - name: Create GitHub release
+        if: steps.version.outputs.version != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$env:VERSION" build/opendeck-akp153.plugin.zip `
+            --title "v$env:VERSION" `
+            --notes-file build/release-notes.md `
+            --target "$env:GITHUB_SHA"
