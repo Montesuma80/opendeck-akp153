@@ -1,4 +1,4 @@
-use device::{handle_error, handle_set_image};
+use device::{draw_side_panel, handle_error, handle_set_image};
 use mirajazz::device::Device;
 use openaction::*;
 use std::{
@@ -107,6 +107,12 @@ impl openaction::GlobalEventHandler for GlobalEventHandler {
 
         for (id, device) in devices.iter() {
             let _ = device.reset().await;
+
+            if let Some(kind) = mappings::Kind::from_vid_pid(device.vid, device.pid) {
+                let _ = draw_side_panel(device, &kind).await;
+                let _ = device.flush().await;
+            }
+
             let _ = outbound.rerender_images(id.to_string()).await;
         }
 

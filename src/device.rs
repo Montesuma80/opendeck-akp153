@@ -1,5 +1,5 @@
 use data_url::DataUrl;
-use image::load_from_memory_with_format;
+use image::{DynamicImage, imageops::FilterType, load_from_memory_with_format};
 use mirajazz::{device::Device, error::MirajazzError, state::DeviceStateUpdate};
 use openaction::{OUTBOUND_EVENT_MANAGER, SetImageEvent};
 use std::{sync::Arc, time::Duration};
@@ -11,9 +11,57 @@ use crate::{
     inputs::opendeck_to_device,
     mappings::{
         COL_COUNT, CandidateDevice, ENCODER_COUNT, KEY_COUNT, Kind, ROW_COUNT,
-        get_image_format_for_key,
+        SIDE_PANEL_DEVICE_KEYS, get_image_format_for_key, get_image_format_for_side_tile,
     },
 };
+
+/// File names (next to the plugin executable) that are looked up for the right side display image
+const SIDE_PANEL_FILES: [&str; 3] = ["side-panel.png", "side-panel.jpg", "side-panel.jpeg"];
+
+fn load_side_panel_image() -> Option<DynamicImage> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+
+    for name in SIDE_PANEL_FILES {
+        let path = dir.join(name);
+
+        if !path.exists() {
+            continue;
+        }
+
+        match image::open(&path) {
+            Ok(image) => return Some(image),
+            Err(err) => log::error!("Could not load side panel image {:?}: {}", path, err),
+        }
+    }
+
+    None
+}
+
+/// Draws the right side display as one tall panel, split across its 3 hardware tiles.
+/// The panel is not a key and is not exposed to OpenDeck. Changes must be flushed.
+pub async fn draw_side_panel(device: &Device, kind: &Kind) -> Result<(), MirajazzError> {
+    let format = get_image_format_for_side_tile(kind);
+    let (width, height) = (format.size.0 as u32, format.size.1 as u32);
+    let tiles = SIDE_PANEL_DEVICE_KEYS.len() as u32;
+
+    match load_side_panel_image() {
+        Some(image) => {
+            let panel = image.resize_to_fill(width, height * tiles, FilterType::Lanczos3);
+
+            for (i, key) in SIDE_PANEL_DEVICE_KEYS.iter().enumerate() {
+                let tile = panel.crop_imm(0, i as u32 * height, width, height);
+                device.set_button_image(*key, format, tile).await?;
+            }
+        }
+        None => {
+            for key in SIDE_PANEL_DEVICE_KEYS {
+                device.clear_button_image(key).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
 
 /// Initializes a device and listens for events
 pub async fn device_task(candidate: CandidateDevice, token: CancellationToken) {
@@ -25,6 +73,7 @@ pub async fn device_task(candidate: CandidateDevice, token: CancellationToken) {
 
         device.set_brightness(50).await?;
         device.clear_all_button_images().await?;
+        draw_side_panel(&device, &candidate.kind).await?;
         device.flush().await?;
 
         Ok(device)
@@ -229,6 +278,16 @@ pub async fn handle_set_image(
     id: &str,
     evt: SetImageEvent,
 ) -> Result<(), MirajazzError> {
+    let kind = Kind::from_vid_pid(device.vid, device.pid).unwrap(); // Safe to unwrap here, because device is already filtered
+
+    // Positions outside of the 3x5 grid (e.g. from profiles made with the old 3x6 layout)
+    // must never reach the right side display
+    if evt.position.is_some_and(|position| position as usize >= KEY_COUNT) {
+        log::warn!("Ignoring image for position outside of the key grid: {:?}", evt.position);
+
+        return Ok(());
+    }
+
     match (evt.position, evt.image) {
         (Some(position), Some(image)) => {
             log::info!("Setting image for button {}", position);
@@ -246,12 +305,10 @@ pub async fn handle_set_image(
 
             let image = load_from_memory_with_format(body.as_slice(), image::ImageFormat::Jpeg)?;
 
-            let kind = Kind::from_vid_pid(device.vid, device.pid).unwrap(); // Safe to unwrap here, because device is already filtered
-
             device
                 .set_button_image(
                     opendeck_to_device(position),
-                    get_image_format_for_key(&kind, position),
+                    get_image_format_for_key(&kind),
                     image,
                 )
                 .await?;
@@ -271,6 +328,7 @@ pub async fn handle_set_image(
         }
         (None, None) => {
             device.clear_all_button_images().await?;
+            draw_side_panel(device, &kind).await?;
             device.flush().await?;
         }
         _ => {}

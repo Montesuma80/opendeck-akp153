@@ -7,10 +7,17 @@ use mirajazz::{
 // Must be unique between all the plugins, 2 characters long and match `DeviceNamespace` field in `manifest.json`
 pub const DEVICE_NAMESPACE: &str = "99";
 
+// Layout exposed to OpenDeck: only the 15 real keys (3 rows x 5 columns)
 pub const ROW_COUNT: usize = 3;
-pub const COL_COUNT: usize = 6;
+pub const COL_COUNT: usize = 5;
 pub const KEY_COUNT: usize = ROW_COUNT * COL_COUNT;
 pub const ENCODER_COUNT: usize = 0;
+
+// The hardware itself addresses 18 image slots. The last 3 (device indices 15, 16, 17,
+// top to bottom) are the tiles of the single tall display on the right side, which is
+// not a key. It is driven as one panel and never reported to OpenDeck.
+pub const DEVICE_KEY_COUNT: usize = 18;
+pub const SIDE_PANEL_DEVICE_KEYS: [u8; 3] = [15, 16, 17];
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
@@ -110,27 +117,30 @@ pub const QUERIES: [DeviceQuery; 17] = [
     TS115_QUERY,
 ];
 
-/// Returns correct image format for device kind and key
-pub fn get_image_format_for_key(kind: &Kind, key: u8) -> ImageFormat {
-    if kind.protocol_version() == 1 {
-        return ImageFormat {
-            mode: ImageMode::JPEG,
-            size: (85, 85),
-            rotation: ImageRotation::Rot90,
-            mirror: ImageMirroring::Both,
-        };
-    }
-
-    let size = match key {
-        5 | 11 | 17 => (82, 82),
-        _ => (95, 95),
-    };
-
+fn image_format(size: (usize, usize)) -> ImageFormat {
     ImageFormat {
         mode: ImageMode::JPEG,
         size,
         rotation: ImageRotation::Rot90,
         mirror: ImageMirroring::Both,
+    }
+}
+
+/// Returns correct image format for one of the 15 regular keys
+pub fn get_image_format_for_key(kind: &Kind) -> ImageFormat {
+    if kind.protocol_version() == 1 {
+        image_format((85, 85))
+    } else {
+        image_format((95, 95))
+    }
+}
+
+/// Returns image format for a single tile of the right side display
+pub fn get_image_format_for_side_tile(kind: &Kind) -> ImageFormat {
+    if kind.protocol_version() == 1 {
+        image_format((85, 85))
+    } else {
+        image_format((82, 82))
     }
 }
 
