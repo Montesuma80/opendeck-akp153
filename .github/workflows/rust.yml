@@ -1,0 +1,44 @@
+name: Build Windows plugin
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  PLUGIN_ID: st.lynx.plugins.opendeck-akp153.sdPlugin
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Collect plugin folder
+        shell: pwsh
+        run: |
+          $dir = "build/$env:PLUGIN_ID"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item -Recurse assets $dir
+          Copy-Item manifest.json $dir
+          Copy-Item target/release/opendeck-akp153.exe "$dir/opendeck-akp153-win.exe"
+
+          # Optional image for the right side display
+          foreach ($name in "side-panel.png", "side-panel.jpg", "side-panel.jpeg") {
+            if (Test-Path $name) { Copy-Item $name $dir }
+          }
+
+          Compress-Archive -Path $dir -DestinationPath build/opendeck-akp153.plugin.zip
+
+      - name: Upload plugin package
+        uses: actions/upload-artifact@v4
+        with:
+          name: opendeck-akp153-windows
+          path: build/opendeck-akp153.plugin.zip
